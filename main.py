@@ -1,21 +1,18 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from datetime import datetime
-import feedparser  # 구글 뉴스 수집용 도구 추가
+from datetime import datetime, timedelta
+import feedparser
 
 st.set_page_config(page_title="나만의 스윙 알리미", page_icon="🚨", layout="centered")
 
 if "my_tickers" not in st.session_state:
     st.session_state["my_tickers"] = []
 
-st.title("🚨 스윙 매매 알리미 V7.3")
+st.title("🚨 스윙 매매 알리미 V7.5")
 
 tab1, tab2 = st.tabs(["🔍 종목 스캐너", "💰 5분할 매수 계산기"])
 
-# ==========================================
-# 탭 1: 종목 스캐너
-# ==========================================
 with tab1:
     st.subheader("📝 관심 종목 관리")
     col1, col2 = st.columns([3, 1])
@@ -41,10 +38,13 @@ with tab1:
             
             current_volume = hist['Volume'].iloc[-1]
             current_price = hist['Close'].iloc[-1]
-            market_cap = info.get('marketCap', 0)
+            market_cap = info.get('market_cap', info.get('marketCap', 0))
             ma20 = hist['Close'].iloc[-20:].mean()
             ma5 = hist['Close'].iloc[-5:].mean()
             avg_vol = hist['Volume'].iloc[-21:-1].mean()
+            
+            # 기업 홈페이지 정보 가져오기
+            website = info.get('website', '정보 없음')
             
             return {
                 "status": "success", "ticker": ticker, "ratio": round(current_volume / avg_vol, 2),
@@ -52,16 +52,14 @@ with tab1:
                 "current_price": round(current_price, 2),
                 "cond_price": 0.5 <= current_price <= 5.0,
                 "cond_mcap": market_cap <= 300000000 if market_cap > 0 else False,
-                "cond_trend": (current_price >= ma20) or (ma5 >= ma20)
+                "cond_trend": (current_price >= ma20) or (ma5 >= ma20),
+                "website": website
             }
         except: return {"status": "error"}
 
-    # --- [핵심] 뉴스 2중 방어 엔진 ---
     def get_combined_news(ticker):
         news_list = []
         seen_titles = set()
-        
-        # 1차 시도: yfinance 뉴스
         try:
             stock = yf.Ticker(ticker)
             yf_news = stock.news
@@ -70,28 +68,26 @@ with tab1:
                 if title and title not in seen_titles:
                     seen_titles.add(title)
                     pub_time = item.get('providerPublishTime')
-                    time_str = datetime.fromtimestamp(pub_time).strftime('%m-%d %H:%M') if pub_time else ""
-                    news_list.append({"title": title, "link": item.get('link', ''), "time": time_str, "source": "Yahoo"})
+                    if pub_time:
+                        dt_object = datetime.fromtimestamp(pub_time)
+                        if datetime.now() - dt_object <= timedelta(days=90):
+                            news_list.append({"title": title, "link": item.get('link', ''), "time": dt_object.strftime('%m-%d %H:%M'), "source": "Yahoo"})
         except: pass
 
-        # 2차 시도: 구글 뉴스 (yfinance가 실패하거나 뉴스가 적을 때)
-        if len(news_list) < 3:
-            try:
-                # 구글 뉴스 RSS 피드 이용
-                rss_url = f"https://news.google.com/rss/search?q={ticker}+stock+when:7d&hl=en-US&gl=US&ceid=US:en"
-                feed = feedparser.parse(rss_url)
-                for entry in feed.entries[:5]:
-                    if entry.title not in seen_titles:
-                        seen_titles.add(entry.title)
-                        news_list.append({"title": entry.title, "link": entry.link, "time": "Latest", "source": "Google"})
-            except: pass
-            
-        return news_list[:5]
+        try:
+            rss_url = f"https://news.google.com/rss/search?q={ticker}+stock+when:90d&hl=en-US&gl=US&ceid=US:en"
+            feed = feedparser.parse(rss_url)
+            for entry in feed.entries[:10]:
+                if entry.title not in seen_titles:
+                    seen_titles.add(entry.title)
+                    news_list.append({"title": entry.title, "link": entry.link, "time": "최근 3개월", "source": "Google"})
+        except: pass
+        return news_list[:10]
 
     if st.button("🚀 종합 스캔 시작", use_container_width=True):
         if not current_tickers: st.error("종목을 추가해 주세요.")
         else:
-            with st.spinner('분석 중...'):
+            with st.spinner('실시간 분석 및 홈페이지 찾는 중...'):
                 for ticker in current_tickers:
                     res = check_stock_conditions(ticker)
                     if res["status"] == "error": continue
@@ -109,16 +105,22 @@ with tab1:
                         st.write(f"- 이평선(추세): {'🟢' if res['cond_trend'] else '🔴'}")
                     
                     news = get_combined_news(ticker)
-                    with st.expander(f"📰 [{ticker}] 최신 뉴스/공시 ({len(news)}개)"):
+                    with st.expander(f"📰 [{ticker}] 최근 3개월 뉴스/공시 ({len(news)}개)"):
                         if news:
                             for n in news:
                                 st.markdown(f"- [{n['title']}]({n['link']}) `[{n['time']}]` *({n['source']})*")
                         else: st.write("뉴스 데이터를 찾을 수 없습니다.")
+                    
+                    # --- [추가] 홈페이지 링크 섹션 ---
+                    if res['website'] != '정보 없음':
+                        st.markdown(f"🔗 **[{ticker}] 공식 홈페이지 바로가기**")
+                        st.caption(f"{res['website']}")
+                        st.markdown(f"[클릭하여 방문하기]({res['website']})")
+                    else:
+                        st.caption("기업 홈페이지 주소를 찾을 수 없습니다.")
+                    
                     st.write("---")
 
-# ==========================================
-# 탭 2: 계산기 (기존 동일)
-# ==========================================
 with tab2:
     st.subheader("💰 5분할 물타기 계산기")
     total_budget = st.number_input("💵 최종 목표 금액", value=310000, step=10000)
