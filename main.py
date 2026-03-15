@@ -175,3 +175,4 @@ with tab4:
         pub_date = entry.published[:16] if 'published' in entry else "최근"
         st.markdown(f"📍 [{entry.title}]({entry.link})  `[{pub_date}]` ")
         st.write("")
+
