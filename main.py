@@ -56,9 +56,9 @@ with tab1:
     def fetch_filtered_data(ticker):
         news_list = []
         filing_list = []
-        cutoff_date = datetime.now() - timedelta(days=90) # 최근 90일 기준
+        cutoff_date = datetime.now() - timedelta(days=90) # 최근 90일 기준 
 
-        # 1. 뉴스 (최근 90일)
+        # 1. 뉴스 (최근 90일) 
         try:
             news_feed = feedparser.parse(f"https://news.google.com/rss/search?q={ticker}+stock+when:90d&hl=en-US&gl=US&ceid=US:en")
             for entry in news_feed.entries[:10]:
@@ -69,6 +69,75 @@ with tab1:
                 })
         except: pass
 
-        # 2. SEC 공시 (최근 90일 필터링)
+        # 2. SEC 공시 (최근 90일 필터링) 
         try:
-            sec_url = f"
+            sec_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={ticker}&output=atom"
+            sec_feed = feedparser.parse(sec_url)
+            
+            for entry in sec_feed.entries:
+                # SEC 날짜 형식 처리 (예: 2024-03-15T12:00:00-04:00)
+                updated_str = entry.updated if 'updated' in entry else ""
+                if updated_str:
+                    # 간단한 날짜 파싱 (ISO 형식 대응)
+                    dt_str = updated_str.split('T')[0]
+                    dt_obj = datetime.strptime(dt_str, '%Y-%m-%d')
+                    
+                    if dt_obj >= cutoff_date: # 최근 3개월 이내일 경우에만 추가 
+                        filing_list.append({
+                            "title": entry.title,
+                            "link": entry.link,
+                            "time": updated_str.replace('T', ' ').split('.')[0]
+                        })
+        except: pass
+        
+        return news_list, filing_list
+
+    if st.button("🚀 종합 스캔 시작", use_container_width=True):
+        if not current_tickers: st.error("종목을 먼저 추가하세요.")
+        else:
+            for ticker in current_tickers:
+                res = get_stock_info(ticker)
+                if not res: continue
+                
+                # 결과 헤더
+                if res['is_spike'] and (res['cond_price'] and res['cond_mcap'] and res['cond_trend']):
+                    st.success(f"### 🌟 [{res['ticker']}] 완벽 타점! (거래량 {res['ratio']}배)")
+                elif res['is_spike']:
+                    st.warning(f"### 🔥 [{res['ticker']}] 거래량 급등 ({res['ratio']}배)")
+                else: st.info(f"### 💤 [{res['ticker']}] 관망 (${res['price']})")
+                
+                n_data, f_data = fetch_filtered_data(ticker)
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    with st.expander(f"📰 뉴스 ({len(n_data)})", expanded=True):
+                        for n in n_data:
+                            st.caption(f"📅 {n['time']}")
+                            st.markdown(f"[{n['title']}]({n['link']})")
+                            st.write("---")
+                with col2:
+                    with st.expander(f"📑 3개월 내 공시 ({len(f_data)})", expanded=True):
+                        if f_data:
+                            for f in f_data:
+                                st.caption(f"🕒 {f['time']}")
+                                st.markdown(f"**{f['title']}**")
+                                st.markdown(f"[문서 보기]({f['link']})")
+                                st.write("---")
+                        else: st.write("최근 3개월 내 공시가 없습니다.")
+
+                if res['website'] != '정보 없음':
+                    st.markdown(f"🔗 [공식 홈페이지 방문하기]({res['website']})")
+                st.write("---")
+
+    st.write("### 🌍 글로벌 마켓 주요 소식 (24H)")
+    w_feed = feedparser.parse("https://news.google.com/rss/search?q=global+stock+market+news+when:24h&hl=en-US&gl=US&ceid=US:en")
+    for e in w_feed.entries[:5]: 
+        st.markdown(f"- [{e.title}]({e.link})")
+
+with tab2:
+    st.subheader("💰 5분할 매수 계산기")
+    total = st.number_input("💵 목표 금액", value=310000)
+    if total > 0:
+        u = total / 31
+        st.success(f"🎯 1차 진입 금액: **{int(u):,}** 원")
+        st.write(f"1차:{int(u):,} / 2차:{int(u*2):,} / 3차:{int(u*4):,} / 4차:{int(u*8):,} / 5차:{int(u*16):,}")
