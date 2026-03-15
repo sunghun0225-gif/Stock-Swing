@@ -42,7 +42,7 @@ def export_as_image(df, title):
     table.scale(1.2, 2.5)
     buf = io.BytesIO()
     plt.savefig(buf, format='png', bbox_inches='tight', dpi=150)
-    plt.close(fig) # 메모리 해제를 위해 추가
+    plt.close(fig) # 메모리 효율을 위해 추가
     buf.seek(0)
     return buf
 
@@ -59,7 +59,7 @@ with tab1:
             st.session_state["my_tickers_us"].append(new_us)
     
     sel_us = st.multiselect("미국 스캔 목록", options=st.session_state["my_tickers_us"], default=st.session_state["my_tickers_us"])
-    if st.button("🚀 미국 종목 스캔 시작", key="start_us"):
+    if st.button("🚀 미국 종목 스캔 시작", use_container_width=True):
         for t in sel_us:
             s = yf.Ticker(t)
             h = s.history(period="6mo")
@@ -68,9 +68,10 @@ with tab1:
                 with st.expander("뉴스/공시 확인"):
                     st.markdown(f"🏛️ [SEC 공시](https://www.sec.gov/cgi-bin/browse-edgar?CIK={t}&action=getcompany)")
                     for n in get_stock_news(t, "US"): st.markdown(f"- [{n['title']}]({n['link']})")
+            st.write("---")
 
 # ==========================================
-# 탭 2: 한국 종목 스캐너 (종목명 표시 보완)
+# 탭 2: 한국 종목 스캐너 (종목명 출력 보완)
 # ==========================================
 with tab2:
     st.subheader("🇰🇷 한국 시장 종목 분석")
@@ -85,7 +86,7 @@ with tab2:
     
     sel_kr = st.multiselect("한국 스캔 목록", options=st.session_state["my_tickers_kr"], default=st.session_state["my_tickers_kr"])
     
-    if st.button("🚀 한국 종목 스캔 시작", key="start_kr"):
+    if st.button("🚀 한국 종목 스캔 시작", use_container_width=True):
         for t in sel_kr:
             found = False
             for suffix in [".KS", ".KQ"]:
@@ -93,11 +94,13 @@ with tab2:
                 s = yf.Ticker(full_ticker)
                 h = s.history(period="6mo")
                 if not h.empty:
-                    # [변경 포인트] 종목명(shortName 또는 longName) 가져오기
+                    # [핵심 수정] 종목명을 가져오는 로직 강화
                     try:
-                        stock_name = s.info.get('shortName') or s.info.get('longName') or t
+                        # info 딕셔너리에서 다양한 이름 키값을 순차적으로 확인
+                        stock_info = s.info
+                        stock_name = stock_info.get('shortName') or stock_info.get('longName') or stock_info.get('symbol') or t
                     except:
-                        stock_name = t
+                        stock_name = t # 실패 시 코드 그대로 표시
                     
                     st.success(f"**[{stock_name} ({full_ticker})]** 현재가: {int(h['Close'].iloc[-1]):,} 원")
                     with st.expander("뉴스/공시 확인"):
@@ -106,10 +109,11 @@ with tab2:
                     found = True
                     break
             if not found:
-                st.error(f"[{t}] 데이터를 불러올 수 없습니다. 코드를 확인해 주세요.")
+                st.error(f"[{t}] 데이터를 찾을 수 없습니다. 코드를 확인해 주세요.")
+            st.write("---")
 
 # ==========================================
-# 탭 3: 정밀 분할 매수
+# 탭 3: 정밀 분할 매수 (V12.0 로직 유지)
 # ==========================================
 with tab3:
     st.subheader("💰 현재가 대비 지점별 정밀 계산기")
@@ -121,6 +125,7 @@ with tab3:
     start_price = c3.number_input(f"현재가(1차 진입가) ({symbol})", value=10.0 if symbol=="$" else 50000.0)
 
     st.markdown("#### 📉 각 회차별 하락 목표치 설정")
+    st.caption("1차 진입가 대비 누적 하락률(%)을 입력하세요.")
     r_cols = st.columns(4)
     r2 = r_cols[0].number_input("2차 지점 하락(%)", value=5.0)
     r3 = r_cols[1].number_input("3차 지점 하락(%)", value=10.0)
@@ -132,16 +137,18 @@ with tab3:
         rates = [0, r2, r3, r4, r5]
         data = []
         
+        # 
         for i in range(1, 6):
             weight = 2**(i-1)
-            target_p = start_price * (1 - (sum(rates[:i]) / 100))
+            # 회차별 가격 계산: 현재가(1차 진입가) 대비 누적 하락률 적용
+            target_p = start_price * (1 - (rates[i-1] / 100))
             
             data.append({
                 "회차": f"{i}차",
                 "비중": f"{weight}배",
                 "목표가": f"{symbol}{target_p:,.2f}" if symbol=="$" else f"{int(target_p):,}원",
                 "매수금액": f"{symbol}{base_unit * weight:,.0f}",
-                "현재가 대비": f"-{sum(rates[:i])}%"
+                "현재가 대비": f"-{rates[i-1]}%"
             })
         
         df = pd.DataFrame(data)
@@ -154,8 +161,8 @@ with tab3:
 # 탭 4: 세계 경제 뉴스
 # ==========================================
 with tab4:
-    if st.button("🔄 실시간 뉴스 새로고침", key="refresh_news"): 
-        st.rerun()
+    if st.button("🔄 실시간 뉴스 새로고침", use_container_width=True): st.rerun()
     feed = feedparser.parse("https://news.google.com/rss/search?q=global+economy+market+when:24h&hl=en-US&gl=US&ceid=US:en")
     for entry in feed.entries[:10]:
         st.markdown(f"📍 [{entry.title}]({entry.link})")
+        st.write("")
