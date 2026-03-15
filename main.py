@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import io
 
 # 1. 앱 기본 설정
-st.set_page_config(page_title="스윙 알리미 V12.3", page_icon="🚨", layout="wide")
+st.set_page_config(page_title="스윙 알리미 V12.4", page_icon="🚨", layout="wide")
 
 if "my_tickers_us" not in st.session_state:
     st.session_state["my_tickers_us"] = []
@@ -18,7 +18,7 @@ st.title("🚨 실시간 글로벌 스캐너 & 정밀 매매 가이드")
 
 tab1, tab2, tab3, tab4 = st.tabs(["🇺🇸 미국 종목", "🇰🇷 한국 종목", "💰 정밀 분할 매수", "🌍 세계 경제 뉴스"])
 
-# --- [공통 함수] 뉴스 수집 (날짜 정보 추가) ---
+# --- [공통 함수] 뉴스 수집 (날짜 정보 포함) ---
 def get_stock_news(ticker, market="US"):
     news_list = []
     try:
@@ -28,15 +28,9 @@ def get_stock_news(ticker, market="US"):
         feed = feedparser.parse(url)
         
         for entry in feed.entries[:8]:
-            # 날짜 포맷팅 (예: Sun, 15 Mar -> 03-15)
             raw_date = entry.published_parsed if 'published_parsed' in entry else None
             date_str = datetime(*raw_date[:6]).strftime('%m-%d %H:%M') if raw_date else "날짜미상"
-            
-            news_list.append({
-                "title": entry.title, 
-                "link": entry.link,
-                "date": date_str
-            })
+            news_list.append({"title": entry.title, "link": entry.link, "date": date_str})
     except: pass
     return news_list
 
@@ -56,7 +50,7 @@ def export_as_image(df, title):
     return buf
 
 # ==========================================
-# 탭 1: 미국 종목 스캐너
+# 탭 1: 미국 종목 스캐너 (홈페이지 링크 추가)
 # ==========================================
 with tab1:
     st.subheader("🇺🇸 미국 시장 종목 분석")
@@ -73,15 +67,28 @@ with tab1:
             s = yf.Ticker(t)
             h = s.history(period="5d")
             if not h.empty:
+                info = s.info
                 st.info(f"**[{t}]** 현재가: ${h['Close'].iloc[-1]:.2f}")
-                with st.expander("뉴스/공시 확인"):
-                    st.markdown(f"🏛️ [SEC 공시](https://www.sec.gov/cgi-bin/browse-edgar?CIK={t}&action=getcompany)")
+                
+                with st.expander(f"📊 {t} 뉴스, 공시 및 홈페이지"):
+                    st.markdown(f"🏛️ [SEC 공식 공시](https://www.sec.gov/cgi-bin/browse-edgar?CIK={t}&action=getcompany)")
+                    st.write("---")
+                    st.markdown("**📰 최근 뉴스**")
                     for n in get_stock_news(t, "US"): 
                         st.markdown(f"- [{n['title']}]({n['link']}) `[{n['date']}]` ")
+                    
+                    # [핵심 추가] 홈페이지 주소 링크
+                    website = info.get('website')
+                    if website:
+                        st.write("---")
+                        st.markdown(f"🔗 **[공식 홈페이지 바로가기]({website})**")
+                    else:
+                        st.write("---")
+                        st.caption("공식 홈페이지 정보를 찾을 수 없습니다.")
             st.write("---")
 
 # ==========================================
-# 탭 2: 한국 종목 스캐너 (종목명 출력 보강)
+# 탭 2: 한국 종목 스캐너
 # ==========================================
 with tab2:
     st.subheader("🇰🇷 한국 시장 종목 분석")
@@ -104,7 +111,6 @@ with tab2:
                 s = yf.Ticker(full_ticker)
                 h = s.history(period="5d")
                 if not h.empty:
-                    # 종목명 가져오기 로직 강화
                     try:
                         info = s.info
                         stock_name = info.get('shortName') or info.get('longName') or info.get('symbol') or t
@@ -166,7 +172,6 @@ with tab4:
     if st.button("🔄 실시간 뉴스 새로고침", key="refresh_news", use_container_width=True): st.rerun()
     feed = feedparser.parse("https://news.google.com/rss/search?q=global+economy+market+when:24h&hl=en-US&gl=US&ceid=US:en")
     for entry in feed.entries[:10]:
-        # 경제 뉴스에도 날짜 추가
         pub_date = entry.published[:16] if 'published' in entry else "최근"
         st.markdown(f"📍 [{entry.title}]({entry.link})  `[{pub_date}]` ")
         st.write("")
