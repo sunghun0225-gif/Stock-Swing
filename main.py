@@ -146,7 +146,7 @@ with tab3:
     if total_budget > 0 and start_price > 0:
         base_unit = total_budget / 31
         # 1:2:4:8:16 마틴게일 전략
-        [attachment_0](attachment)
+        
         
         rates = [0, r2, r3, r4, r5]
         data = []
@@ -174,55 +174,8 @@ with tab3:
 # ==========================================
 with tab4:
     if st.button("🔄 실시간 뉴스 새로고침", use_container_width=True): st.rerun()
-    feed = feedparser.parse("
-# ==========================================
-with tab2 if False else tab3: # 탭 순서상 3번째
-    st.subheader("💰 현재가 대비 지점별 정밀 계산기")
-    
-    c1, c2, c3 = st.columns(3)
-    currency = c1.radio("통화", ["USD ($)", "KRW (원)"])
-    symbol = "$" if currency == "USD ($)" else "원"
-    total_budget = c2.number_input(f"총 예산 ({symbol})", value=1000.0 if symbol=="$" else 3000000.0)
-    start_price = c3.number_input(f"현재가(1차 진입가) ({symbol})", value=10.0 if symbol=="$" else 50000.0)
-
-    st.markdown("#### 📉 각 회차별 하락 목표치 설정")
-    r_cols = st.columns(4)
-    r2 = r_cols[0].number_input("2차 지점 하락(%)", value=5.0)
-    r3 = r_cols[1].number_input("3차 지점 하락(%)", value=10.0)
-    r4 = r_cols[2].number_input("4차 지점 하락(%)", value=15.0)
-    r5 = r_cols[3].number_input("5차 지점 하락(%)", value=20.0)
-
-    if total_budget > 0 and start_price > 0:
-        base_unit = total_budget / 31
-        rates = [0, r2, r3, r4, r5]
-        data = []
-        
-        for i in range(1, 6):
-            weight = 2**(i-1)
-            # 회차별 가격 계산: 현재가(1차 진입가) 대비 누적 하락률 적용
-            # 사용자의 의도에 따라 전회차 대비가 아닌 '현재가 대비' 고정 하락으로 계산
-            target_p = start_price * (1 - (sum(rates[:i]) / 100))
-            
-            data.append({
-                "회차": f"{i}차",
-                "비중": f"{weight}배",
-                "목표가": f"{symbol}{target_p:,.2f}" if symbol=="$" else f"{int(target_p):,}원",
-                "매수금액": f"{symbol}{base_unit * weight:,.0f}",
-                "현재가 대비": f"-{sum(rates[:i])}%"
-            })
-        
-        df = pd.DataFrame(data)
-        st.table(df)
-        
-        # 이미지 저장 기능
-        img_buf = export_as_image(df, "Trading Strategy Plan")
-        st.download_button("📸 계산 결과 이미지로 저장", data=img_buf, file_name="plan.png", mime="image/png", use_container_width=True)
-
-# ==========================================
-# 탭 4: 세계 경제 뉴스
-# ==========================================
-with tab4:
-    if st.button("🔄 실시간 뉴스 새로고침"): st.rerun()
     feed = feedparser.parse("https://news.google.com/rss/search?q=global+economy+market+when:24h&hl=en-US&gl=US&ceid=US:en")
     for entry in feed.entries[:10]:
         st.markdown(f"📍 [{entry.title}]({entry.link})")
+        st.write("")
+
