@@ -1,11 +1,10 @@
 import time
 import streamlit as st
+import streamlit.components.v1 as components
 import yfinance as yf
 import pandas as pd
 import requests
 import feedparser
-import matplotlib.pyplot as plt
-import io
 from datetime import datetime
 
 # ── 앱 기본 설정 ──────────────────────────────────────────────────────────────
@@ -196,110 +195,6 @@ def get_stock_news(query_name, market="US"):
         pass
     return news_list
 
-# ── 이미지 저장 (NotoSansCJK-KR 직접 지정으로 한글 완전 지원) ───────────────
-def get_korean_font():
-    """서버 환경에 맞게 한글 폰트 경로를 반환. 없으면 다운로드."""
-    import os, urllib.request, matplotlib.font_manager as fm
-
-    # 1) 흔한 시스템 경로 목록
-    candidates = [
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-        "/System/Library/Fonts/AppleSDGothicNeo.ttc",           # macOS
-        "C:/Windows/Fonts/malgun.ttf",                           # Windows
-    ]
-    for p in candidates:
-        if os.path.exists(p):
-            return p
-
-    # 2) 없으면 GitHub에서 NanumGothic 다운로드 (가장 가벼운 한글 TTF)
-    dl_path = "/tmp/NanumGothic.ttf"
-    if not os.path.exists(dl_path):
-        url = (
-            "https://github.com/googlefonts/nanum-gothic/"
-            "raw/main/fonts/NanumGothic-Regular.ttf"
-        )
-        try:
-            urllib.request.urlretrieve(url, dl_path)
-        except Exception:
-            return None
-    fm.fontManager.addfont(dl_path)
-    return dl_path
-
-def export_as_image(df, title, meta_text=""):
-    import matplotlib.font_manager as fm
-
-    FONT_PATH = get_korean_font()
-    if FONT_PATH is None:
-        FONT_PATH = ""  # fallback: 시스템 기본 폰트
-    plt.rcParams["axes.unicode_minus"] = False
-    def _fp(size, weight="normal"):
-        if FONT_PATH:
-            return fm.FontProperties(fname=FONT_PATH, size=size, weight=weight)
-        return fm.FontProperties(size=size, weight=weight)
-    fp_normal = _fp(10)
-    fp_header = _fp(9)
-
-    n_rows = len(df)
-    n_cols = len(df.columns)
-    fig_h = max(4.5, 1.5 + n_rows * 0.65)
-    fig, ax = plt.subplots(figsize=(max(12, n_cols * 1.9), fig_h))
-    fig.patch.set_facecolor("#0d1117")
-    ax.set_facecolor("#0d1117")
-    ax.axis("off")
-
-    # 제목
-    ax.text(0.5, 0.97, title, transform=ax.transAxes,
-            color="#e6edf3", ha="center", va="top",
-            fontproperties=_fp(15, "bold"))
-    if meta_text:
-        ax.text(0.5, 0.90, meta_text, transform=ax.transAxes,
-                color="#8b949e", ha="center", va="top",
-                fontproperties=_fp(9))
-
-    top_offset = 0.84 if meta_text else 0.88
-
-    cell_colors = [
-        ["#161b22" if r % 2 == 0 else "#0d1117"] * n_cols
-        for r in range(n_rows)
-    ]
-    tbl = ax.table(
-        cellText=df.values,
-        colLabels=df.columns,
-        cellLoc="center",
-        loc="center",
-        bbox=[0, 0, 1, top_offset],
-        cellColours=cell_colors,
-        colColours=["#21262d"] * n_cols,
-    )
-    tbl.auto_set_font_size(False)
-    tbl.set_fontsize(10)
-
-    accent_cols = {
-        "매수가":       "#00ff9d",
-        "누적 평균단가": "#58a6ff",
-        "매수금액":      "#f0883e",
-        "매수량(주)":    "#ffa657",
-        "평단 대비":     "#ff7b72",
-    }
-    for (row, col), cell in tbl.get_celld().items():
-        cell.set_edgecolor("#21262d")
-        cell.set_linewidth(0.5)
-        txt = cell.get_text()
-        if row == 0:
-            txt.set_color("#8b949e")
-            txt.set_fontproperties(fp_header)
-        else:
-            col_name = df.columns[col] if col < len(df.columns) else ""
-            txt.set_color(accent_cols.get(col_name, "#e6edf3"))
-            txt.set_fontproperties(fp_normal)
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight", dpi=180,
-                facecolor=fig.get_facecolor())
-    plt.close(fig)
-    buf.seek(0)
-    return buf
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 탭 1: 미국 종목
@@ -573,27 +468,128 @@ with tab3:
             })
 
         df = pd.DataFrame(data)
-        st.table(df)
 
-        # 비중 합계 안내
+        # ── html2canvas 방식으로 브라우저에서 직접 캡처 ──────────────────────
+        meta_text = (
+            f"총 {num_rounds}회 분할  |  비중 합계 {total_weight}배  |  "
+            + (f"기준단위 ${base_unit:,.2f}" if symbol == "$" else f"기준단위 {int(base_unit):,}원")
+        )
+        title_text = f"분할 매수 전략  ({num_rounds}회)"
+
+        # 테이블 HTML 생성
+        thead = "".join(f"<th>{c}</th>" for c in df.columns)
+        tbody_rows = ""
+        accent_map = {
+            "매수가":       "#00b894",
+            "누적 평균단가": "#0984e3",
+            "매수금액":      "#e17055",
+            "매수량(주)":    "#fdcb6e",
+            "평단 대비":     "#d63031",
+        }
+        for _, row in df.iterrows():
+            cells = ""
+            for col in df.columns:
+                color = accent_map.get(col, "#2d3436")
+                cells += f'<td style="color:{color};font-weight:600">{row[col]}</td>'
+            tbody_rows += f"<tr>{cells}</tr>"
+
+        html_component = f"""
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ background: #f9fafb; font-family: 'Noto Sans KR', sans-serif; padding: 16px; }}
+    #captureArea {{
+      background: #ffffff;
+      border-radius: 12px;
+      padding: 24px 28px 20px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      max-width: 900px;
+    }}
+    .title {{
+      font-size: 18px; font-weight: 700; color: #1a1a2e;
+      text-align: center; margin-bottom: 4px;
+    }}
+    .meta {{
+      font-size: 12px; color: #636e72;
+      text-align: center; margin-bottom: 16px;
+    }}
+    table {{
+      width: 100%; border-collapse: collapse; font-size: 13px;
+    }}
+    th {{
+      background: #f1f3f5; color: #495057;
+      padding: 10px 8px; font-weight: 600;
+      border-bottom: 2px solid #dee2e6;
+      text-align: center;
+    }}
+    td {{
+      padding: 10px 8px; text-align: center;
+      border-bottom: 1px solid #f1f3f5;
+      font-size: 13px;
+    }}
+    tr:nth-child(even) td {{ background: #f8f9fa; }}
+    tr:last-child td {{ border-bottom: none; }}
+    .summary-bar {{
+      margin-top: 14px;
+      background: #f1f8ff;
+      border-left: 4px solid #0984e3;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-size: 13px; color: #2d3436;
+    }}
+    .btn {{
+      display: block; width: 100%; margin-top: 14px;
+      padding: 11px; border: none; border-radius: 8px;
+      background: #0984e3; color: white;
+      font-size: 14px; font-weight: 700;
+      font-family: 'Noto Sans KR', sans-serif;
+      cursor: pointer; letter-spacing: 0.5px;
+    }}
+    .btn:hover {{ background: #0773c5; }}
+  </style>
+</head>
+<body>
+  <div id="captureArea">
+    <div class="title">📊 {title_text}</div>
+    <div class="meta">{meta_text}</div>
+    <table>
+      <thead><tr>{thead}</tr></thead>
+      <tbody>{tbody_rows}</tbody>
+    </table>
+    <div class="summary-bar">{meta_text}</div>
+  </div>
+  <button class="btn" onclick="saveImg()">📷 이미지로 저장</button>
+  <script>
+    async function saveImg() {{
+      const el = document.getElementById('captureArea');
+      const canvas = await html2canvas(el, {{
+        backgroundColor: "#ffffff",
+        scale: 2,
+        useCORS: true,
+      }});
+      const link = document.createElement('a');
+      link.download = '분할매수전략.png';
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }}
+  </script>
+</body>
+</html>
+"""
+        # st.table은 참고용으로 유지, html2canvas 컴포넌트 추가
+        st.table(df)
         st.info(
             f"총 {num_rounds}회 분할 | 비중 합계: **{total_weight}배** 단위 "
             f"| 기준 단위: "
             + (f"**${base_unit:,.2f}**" if symbol == "$" else f"**{int(base_unit):,}원**")
         )
-
-        meta = (
-            f"총 {num_rounds}회 분할  |  비중 합계 {total_weight}배  |  "
-            + (f"기준단위 ${base_unit:,.2f}" if symbol == "$" else f"기준단위 {int(base_unit):,}원")
-        )
-        img_buf = export_as_image(df, f"분할 매수 전략  ({num_rounds}회)", meta_text=meta)
-        st.download_button(
-            "📸 전략표 이미지로 저장",
-            data=img_buf,
-            file_name="split_buy_plan.png",
-            mime="image/png",
-            use_container_width=True,
-        )
+        with st.expander("📷 이미지로 저장 (클릭하면 저장 버튼이 나타납니다)", expanded=True):
+            components.html(html_component, height=420, scrolling=False)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 탭 4: 세계 경제 뉴스
@@ -613,4 +609,3 @@ with tab4:
             f"📍 [{entry.title}]({entry.link})  `[{pub_date}]`"
         )
         st.write("")
-
