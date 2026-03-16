@@ -94,6 +94,26 @@ def fetch_ticker_cached(ticker: str):
         pass
     return None, {}, False
 
+# ── 네이버 금융에서 한글 종목명 조회 ─────────────────────────────────────────
+@st.cache_data(ttl=86400)
+def get_kr_stock_name(code: str) -> str:
+    """네이버 금융 API로 한글 종목명 반환. 실패 시 빈 문자열."""
+    try:
+        url = f"https://finance.naver.com/item/main.naver?code={code}"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        res = requests.get(url, headers=headers, timeout=6)
+        if res.status_code == 200:
+            # <title>종목명 : 네이버 금융</title> 패턴에서 추출
+            import re
+            match = re.search(r"<title>\s*([^:]+?)\s*:", res.text)
+            if match:
+                name = match.group(1).strip()
+                if name and name != "네이버 금융":
+                    return name
+    except Exception:
+        pass
+    return ""
+
 # ── SEC EDGAR CIK 조회 ────────────────────────────────────────────────────────
 @st.cache_data(ttl=86400)
 def get_cik(ticker: str):
@@ -299,15 +319,19 @@ with tab2:
                     price, info, from_cache = fetch_ticker_cached(full_ticker)
 
                 if price is not None:
+                    # 1순위: 네이버 금융 한글명, 2순위: yfinance명, 3순위: 코드
+                    kr_name = get_kr_stock_name(t)
                     stock_name = (
-                        info.get("shortName")
+                        kr_name
+                        or info.get("shortName")
                         or info.get("longName")
                         or info.get("symbol")
                         or t
                     )
+                    market_label = suffix.replace(".", "")  # KS 또는 KQ
                     cache_note = "  `캐시`" if from_cache else ""
                     st.success(
-                        f"**[{stock_name} ({full_ticker})]** "
+                        f"**{stock_name}** `{t}` ({market_label})  |  "
                         f"현재가: {int(price):,} 원{cache_note}"
                     )
 
@@ -421,3 +445,4 @@ with tab4:
             f"📍 [{entry.title}]({entry.link})  `[{pub_date}]`"
         )
         st.write("")
+
