@@ -166,14 +166,19 @@ def get_sec_filings(ticker: str, limit: int = 12):
         return None, f"오류: {e}"
 
 # ── 뉴스 수집 ─────────────────────────────────────────────────────────────────
-def get_stock_news(ticker, market="US"):
+def get_stock_news(query_name, market="US"):
+    import urllib.parse
     news_list = []
     try:
-        query = f"{ticker}+stock" if market == "US" else f"{ticker}+주식"
-        hl, gl, ceid = (
-            ("en-US", "US", "US:en") if market == "US"
-            else ("ko-KR", "KR", "KR:ko")
-        )
+        if market == "US":
+            raw_q = f"{query_name} stock"
+            hl, gl, ceid = "en-US", "US", "US:en"
+        else:
+            # 한글 종목명으로 검색 (종목코드.KS 대신 "삼성전자 주가" 형태)
+            raw_q = f"{query_name} 주가"
+            hl, gl, ceid = "ko-KR", "KR", "KR:ko"
+
+        query = urllib.parse.quote(raw_q)
         url = (
             f"https://news.google.com/rss/search"
             f"?q={query}+when:90d&hl={hl}&gl={gl}&ceid={ceid}"
@@ -335,8 +340,8 @@ with tab2:
                         f"현재가: {int(price):,} 원{cache_note}"
                     )
 
-                    with st.expander("📋 DART 공시", expanded=True):
-                        name_query = stock_name.split(" ")[0] if stock_name else t
+                    with st.expander(f"📋 {stock_name} DART 공시", expanded=True):
+                        name_query = kr_name.split(" ")[0] if kr_name else (stock_name.split(" ")[0] if stock_name else t)
                         col1, col2, col3 = st.columns(3)
                         col1.markdown(
                             f"[🏛️ DART 공시 검색]"
@@ -356,8 +361,10 @@ with tab2:
                             "💡 DART Open API 키를 발급받으면 실시간 공시 목록 연동이 가능합니다."
                         )
 
-                    with st.expander("📰 뉴스 확인"):
-                        for n in get_stock_news(full_ticker, "KR"):
+                    with st.expander(f"📰 {stock_name} 뉴스 확인"):
+                        # 한글 종목명으로 검색해야 뉴스가 잘 나옴
+                        news_query = kr_name or stock_name or t
+                        for n in get_stock_news(news_query, "KR"):
                             st.markdown(
                                 f"- [{n['title']}]({n['link']}) `[{n['date']}]`"
                             )
@@ -445,4 +452,3 @@ with tab4:
             f"📍 [{entry.title}]({entry.link})  `[{pub_date}]`"
         )
         st.write("")
-
