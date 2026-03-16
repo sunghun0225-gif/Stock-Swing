@@ -196,20 +196,85 @@ def get_stock_news(query_name, market="US"):
         pass
     return news_list
 
-# ── 이미지 저장 ───────────────────────────────────────────────────────────────
-def export_as_image(df, title):
-    fig, ax = plt.subplots(figsize=(10, 6))
+# ── 이미지 저장 (한글 폰트 + 스타일 테이블) ─────────────────────────────────
+def export_as_image(df, title, meta_text=""):
+    import matplotlib.font_manager as fm
+    import matplotlib.patches as mpatches
+
+    # 한글 지원 폰트 설정
+    cjk_fonts = [f.fname for f in fm.fontManager.ttflist if "CJK" in f.name or "Noto" in f.name]
+    if cjk_fonts:
+        plt.rcParams["font.family"] = fm.FontProperties(fname=cjk_fonts[0]).get_name()
+
+    n_rows = len(df)
+    n_cols = len(df.columns)
+    fig_h = max(4.5, 1.5 + n_rows * 0.65)
+    fig, ax = plt.subplots(figsize=(max(12, n_cols * 1.8), fig_h))
+    fig.patch.set_facecolor("#0d1117")
+    ax.set_facecolor("#0d1117")
     ax.axis("off")
-    ax.set_title(title, fontsize=16, weight="bold", pad=20)
-    table = ax.table(
-        cellText=df.values, colLabels=df.columns,
-        cellLoc="center", loc="center"
+
+    # 제목
+    ax.text(
+        0.5, 0.97, title,
+        transform=ax.transAxes,
+        fontsize=15, fontweight="bold",
+        color="#e6edf3", ha="center", va="top"
     )
-    table.auto_set_font_size(False)
-    table.set_fontsize(11)
-    table.scale(1.2, 2.5)
+    # 부제 (기준 단위 등)
+    if meta_text:
+        ax.text(
+            0.5, 0.90, meta_text,
+            transform=ax.transAxes,
+            fontsize=9, color="#8b949e", ha="center", va="top"
+        )
+
+    top_offset = 0.84 if meta_text else 0.88
+
+    # 컬럼 너비 균등
+    col_widths = [1.0 / n_cols] * n_cols
+
+    # 헤더
+    header_colors = ["#21262d"] * n_cols
+    row_colors_even = "#161b22"
+    row_colors_odd  = "#0d1117"
+
+    # 색상 행 구성
+    cell_colors = []
+    for r in range(n_rows):
+        base = row_colors_even if r % 2 == 0 else row_colors_odd
+        cell_colors.append([base] * n_cols)
+
+    tbl = ax.table(
+        cellText=df.values,
+        colLabels=df.columns,
+        cellLoc="center",
+        loc="center",
+        bbox=[0, 0, 1, top_offset],
+        cellColours=cell_colors,
+        colColours=header_colors,
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+
+    # 셀 텍스트 색상
+    accent_cols = {"매수가": "#00ff9d", "누적 평균단가": "#58a6ff",
+                   "매수금액": "#f0883e", "매수량(주)": "#ffa657",
+                   "평단 대비": "#ff7b72"}
+    for (row, col), cell in tbl.get_celld().items():
+        cell.set_edgecolor("#21262d")
+        cell.set_linewidth(0.5)
+        if row == 0:
+            cell.get_text().set_color("#8b949e")
+            cell.get_text().set_fontsize(9)
+            cell.get_text().set_fontweight("bold")
+        else:
+            col_name = df.columns[col] if col < len(df.columns) else ""
+            color = accent_cols.get(col_name, "#e6edf3")
+            cell.get_text().set_color(color)
+
     buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight", dpi=150)
+    plt.savefig(buf, format="png", bbox_inches="tight", dpi=180, facecolor=fig.get_facecolor())
     plt.close(fig)
     buf.seek(0)
     return buf
@@ -495,11 +560,15 @@ with tab3:
             + (f"**${base_unit:,.2f}**" if symbol == "$" else f"**{int(base_unit):,}원**")
         )
 
-        img_buf = export_as_image(df, f"분할 매수 전략 ({num_rounds}회)")
+        meta = (
+            f"총 {num_rounds}회 분할  |  비중 합계 {total_weight}배  |  "
+            + (f"기준단위 ${base_unit:,.2f}" if symbol == "$" else f"기준단위 {int(base_unit):,}원")
+        )
+        img_buf = export_as_image(df, f"분할 매수 전략  ({num_rounds}회)", meta_text=meta)
         st.download_button(
-            "📸 계산 결과 이미지로 저장",
+            "📸 전략표 이미지로 저장",
             data=img_buf,
-            file_name="plan.png",
+            file_name="split_buy_plan.png",
             mime="image/png",
             use_container_width=True,
         )
