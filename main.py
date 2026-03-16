@@ -480,18 +480,50 @@ with tab3:
         thead = "".join(f"<th>{c}</th>" for c in df.columns)
         tbody_rows = ""
         accent_map = {
-            "매수가":       "#00b894",
-            "누적 평균단가": "#0984e3",
-            "매수금액":      "#e17055",
-            "매수량(주)":    "#fdcb6e",
-            "평단 대비":     "#d63031",
+            "매수가":       "#2f9e44",
+            "누적 평균단가": "#1971c2",
+            "매수금액":      "#d9480f",
+            "매수량(주)":    "#e67700",
+            "평단 대비":     "#c92a2a",
+            "회차":         "#495057",
+            "비중":         "#495057",
         }
         for _, row in df.iterrows():
             cells = ""
             for col in df.columns:
                 color = accent_map.get(col, "#2d3436")
-                cells += f'<td style="color:{color};font-weight:600">{row[col]}</td>'
+                cells += f'<td style="color:{color}">{row[col]}</td>'
             tbody_rows += f"<tr>{cells}</tr>"
+
+        # 합계 행: 총 매수량, 총 매수금액, 최종 평균단가
+        total_shares_val = cum_shares
+        total_amount_val = cum_amount
+        final_avg_val    = avg_price
+        tfoot_cells = ""
+        for col in df.columns:
+            if col == "회차":
+                tfoot_cells += "<td>합계</td>"
+            elif col == "비중":
+                tfoot_cells += f"<td>{total_weight}배</td>"
+            elif col == "매수가":
+                tfoot_cells += "<td>—</td>"
+            elif col == "매수량(주)":
+                val = f"{total_shares_val:,.4f}" if symbol == "$" else f"{total_shares_val:,.2f}"
+                tfoot_cells += f"<td>{val}</td>"
+            elif col == "매수금액":
+                val = f"${total_amount_val:,.0f}" if symbol == "$" else f"{int(total_amount_val):,}원"
+                tfoot_cells += f"<td>{val}</td>"
+            elif col == "누적 평균단가":
+                val = f"${final_avg_val:,.2f}" if symbol == "$" else f"{int(final_avg_val):,}원"
+                tfoot_cells += f"<td>{val}</td>"
+            elif col == "평단 대비":
+                tfoot_cells += "<td>—</td>"
+            else:
+                tfoot_cells += "<td>—</td>"
+        tfoot_row = tfoot_cells
+
+        # 동적 높이 계산: 헤더 + 행 수 + 여백
+        component_height = 160 + len(data) * 46 + 80  # 제목+메타+버튼 여백
 
         html_component = f"""
 <!DOCTYPE html>
@@ -502,55 +534,72 @@ with tab3:
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{ background: #f9fafb; font-family: 'Noto Sans KR', sans-serif; padding: 16px; }}
+    body {{
+      background: #f0f2f5;
+      font-family: 'Noto Sans KR', 'Apple SD Gothic Neo', sans-serif;
+      padding: 12px;
+    }}
     #captureArea {{
       background: #ffffff;
       border-radius: 12px;
-      padding: 24px 28px 20px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
-      max-width: 900px;
+      padding: 22px 24px 18px;
+      box-shadow: 0 2px 16px rgba(0,0,0,0.10);
     }}
     .title {{
-      font-size: 18px; font-weight: 700; color: #1a1a2e;
-      text-align: center; margin-bottom: 4px;
+      font-size: 17px; font-weight: 700; color: #1a1a2e;
+      text-align: center; margin-bottom: 3px; letter-spacing: -0.3px;
     }}
     .meta {{
-      font-size: 12px; color: #636e72;
-      text-align: center; margin-bottom: 16px;
+      font-size: 12px; color: #868e96;
+      text-align: center; margin-bottom: 14px;
     }}
     table {{
       width: 100%; border-collapse: collapse; font-size: 13px;
     }}
-    th {{
-      background: #f1f3f5; color: #495057;
-      padding: 10px 8px; font-weight: 600;
+    thead tr {{
+      background: #f8f9fa;
+      border-top: 2px solid #dee2e6;
       border-bottom: 2px solid #dee2e6;
-      text-align: center;
+    }}
+    th {{
+      color: #495057; padding: 10px 6px;
+      font-weight: 700; text-align: center;
+      font-size: 12px; letter-spacing: 0.2px;
     }}
     td {{
-      padding: 10px 8px; text-align: center;
+      padding: 10px 6px; text-align: center;
       border-bottom: 1px solid #f1f3f5;
-      font-size: 13px;
+      font-size: 13px; font-weight: 600;
     }}
-    tr:nth-child(even) td {{ background: #f8f9fa; }}
-    tr:last-child td {{ border-bottom: none; }}
+    tbody tr:nth-child(even) td {{ background: #f8f9fa; }}
+    tbody tr:last-child td {{ border-bottom: 2px solid #dee2e6; }}
+    tfoot td {{
+      padding: 10px 6px; font-weight: 700;
+      text-align: center; font-size: 13px;
+      background: #f1f8ff; color: #1971c2;
+      border-top: 2px solid #74c0fc;
+    }}
     .summary-bar {{
-      margin-top: 14px;
+      margin-top: 12px;
       background: #f1f8ff;
-      border-left: 4px solid #0984e3;
+      border-left: 4px solid #339af0;
       border-radius: 6px;
-      padding: 10px 14px;
-      font-size: 13px; color: #2d3436;
+      padding: 9px 13px;
+      font-size: 12px; color: #1864ab;
+      font-weight: 600;
     }}
     .btn {{
-      display: block; width: 100%; margin-top: 14px;
+      display: block; width: 100%; margin-top: 12px;
       padding: 11px; border: none; border-radius: 8px;
-      background: #0984e3; color: white;
+      background: #1971c2; color: white;
       font-size: 14px; font-weight: 700;
       font-family: 'Noto Sans KR', sans-serif;
       cursor: pointer; letter-spacing: 0.5px;
+      transition: background 0.15s;
     }}
-    .btn:hover {{ background: #0773c5; }}
+    .btn:hover {{ background: #1558a8; }}
+    .btn:disabled {{ background: #adb5bd; cursor: not-allowed; }}
+    #status {{ text-align:center; font-size:12px; color:#868e96; margin-top:6px; min-height:18px; }}
   </style>
 </head>
 <body>
@@ -560,36 +609,73 @@ with tab3:
     <table>
       <thead><tr>{thead}</tr></thead>
       <tbody>{tbody_rows}</tbody>
+      <tfoot><tr>{tfoot_row}</tr></tfoot>
     </table>
     <div class="summary-bar">{meta_text}</div>
   </div>
-  <button class="btn" onclick="saveImg()">📷 이미지로 저장</button>
+  <button class="btn" id="saveBtn" onclick="saveImg()">📷 이미지로 저장</button>
+  <div id="status"></div>
   <script>
     async function saveImg() {{
-      const el = document.getElementById('captureArea');
-      const canvas = await html2canvas(el, {{
-        backgroundColor: "#ffffff",
-        scale: 2,
-        useCORS: true,
-      }});
-      const link = document.createElement('a');
-      link.download = '분할매수전략.png';
-      link.href = canvas.toDataURL('image/png');
-      link.click();
+      const btn = document.getElementById('saveBtn');
+      const status = document.getElementById('status');
+      btn.disabled = true;
+      btn.textContent = '⏳ 생성 중...';
+      status.textContent = '';
+      try {{
+        // 폰트 로딩 대기
+        await document.fonts.ready;
+        const el = document.getElementById('captureArea');
+        const canvas = await html2canvas(el, {{
+          backgroundColor: "#ffffff",
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          logging: false,
+        }});
+        const dataUrl = canvas.toDataURL('image/png');
+        // Streamlit iframe 내부: window.open으로 새 탭에서 직접 다운로드
+        const newWin = window.open('', '_blank');
+        if (newWin) {{
+          newWin.document.write(
+            '<html><body style="margin:0;background:#111">' +
+            '<img src="' + dataUrl + '" style="max-width:100%">' +
+            '<br><a href="' + dataUrl + '" download="분할매수전략.png" ' +
+            'style="display:block;margin:10px;padding:10px 20px;background:#1971c2;' +
+            'color:white;text-decoration:none;border-radius:6px;width:fit-content">' +
+            '💾 PNG 저장' +
+            '</a></body></html>'
+          );
+          newWin.document.close();
+          status.textContent = '✅ 새 탭이 열렸습니다. 이미지를 확인 후 저장하세요.';
+        }} else {{
+          // 팝업 차단된 경우: 같은 탭에서 a 태그로 시도
+          const link = document.createElement('a');
+          link.download = '분할매수전략.png';
+          link.href = dataUrl;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          status.textContent = '✅ 다운로드가 시작됩니다.';
+        }}
+      }} catch(e) {{
+        status.textContent = '❌ 오류: ' + e.message;
+      }}
+      btn.disabled = false;
+      btn.textContent = '📷 이미지로 저장';
     }}
   </script>
 </body>
 </html>
 """
-        # st.table은 참고용으로 유지, html2canvas 컴포넌트 추가
         st.table(df)
         st.info(
             f"총 {num_rounds}회 분할 | 비중 합계: **{total_weight}배** 단위 "
             f"| 기준 단위: "
             + (f"**${base_unit:,.2f}**" if symbol == "$" else f"**{int(base_unit):,}원**")
         )
-        with st.expander("📷 이미지로 저장 (클릭하면 저장 버튼이 나타납니다)", expanded=True):
-            components.html(html_component, height=420, scrolling=False)
+        st.markdown("##### 📷 이미지 저장")
+        components.html(html_component, height=component_height, scrolling=False)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 탭 4: 세계 경제 뉴스
@@ -609,3 +695,4 @@ with tab4:
             f"📍 [{entry.title}]({entry.link})  `[{pub_date}]`"
         )
         st.write("")
+
