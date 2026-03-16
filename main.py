@@ -461,12 +461,18 @@ with tab3:
             avg_price = cum_amount / cum_shares
             prev_avg = avg_price  # 다음 회차 기준값으로 전달
 
+            shares = amount / target_p  # 해당 회차 매수 수량
+
             data.append({
                 "회차": f"{i + 1}차",
                 "비중": f"{weight}배",
                 "매수가": (
                     f"${target_p:,.2f}" if symbol == "$"
                     else f"{int(target_p):,}원"
+                ),
+                "매수량(주)": (
+                    f"{shares:,.4f}" if symbol == "$"
+                    else f"{shares:,.2f}"
                 ),
                 "매수금액": (
                     f"${amount:,.0f}" if symbol == "$"
