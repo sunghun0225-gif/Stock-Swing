@@ -1,10 +1,10 @@
+import time
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import requests
 import feedparser
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
 import io
 from datetime import datetime
 
@@ -15,6 +15,10 @@ if "my_tickers_us" not in st.session_state:
     st.session_state["my_tickers_us"] = []
 if "my_tickers_kr" not in st.session_state:
     st.session_state["my_tickers_kr"] = []
+if "price_cache" not in st.session_state:
+    st.session_state["price_cache"] = {}
+
+CACHE_TTL = 300  # 5분 캐시
 
 st.title("🚨 실시간 글로벌 스캐너 & 정밀 매매 가이드")
 
@@ -22,7 +26,7 @@ tab1, tab2, tab3, tab4 = st.tabs(
     ["🇺🇸 미국 종목", "🇰🇷 한국 종목", "💰 정밀 분할 매수", "🌍 세계 경제 뉴스"]
 )
 
-# ── 공시 형식 레이블 ───────────────────────────────────────────────────────────
+# ── 공시 레이블 ───────────────────────────────────────────────────────────────
 FILING_LABELS = {
     "10-K": "📊 연간보고서",
     "20-F": "📊 연간보고서(외국)",
@@ -43,27 +47,71 @@ def filing_label(form):
             return label
     return f"📄 {form}"
 
-# ── SEC EDGAR: CIK 조회 ───────────────────────────────────────────────────────
+# ── yfinance Rate Limit 대응: 재시도 + 점진적 대기 ───────────────────────────
+def fetch_history_safe(ticker_obj, period="5d", retries=3, base_delay=2):
+    """Rate limit 발생 시 점진적 대기 후 재시도 (2초 → 4초 → 6초)"""
+    for attempt in range(retries):
+        try:
+            h = ticker_obj.history(period=period)
+            if not h.empty:
+                return h
+        except Exception as e:
+            msg = str(e).lower()
+            if any(k in msg for k in ["rate", "429", "too many", "limit"]):
+                if attempt < retries - 1:
+                    wait = base_delay * (attempt + 1)
+                    time.sleep(wait)
+                    continue
+            break
+    return None
+
+def fetch_ticker_cached(ticker: str):
+    """
+    session_state 캐시에서 가격 반환.
+    캐시 만료(5분) 또는 미존재 시 yfinance 새 요청.
+    반환: (price, info_dict, from_cache)
+    """
+    now = time.time()
+    cache = st.session_state["price_cache"]
+
+    if ticker in cache:
+        price, ts, info_cached = cache[ticker]
+        if now - ts < CACHE_TTL:
+            return price, info_cached, True
+
+    try:
+        s = yf.Ticker(ticker)
+        h = fetch_history_safe(s, period="5d")
+        if h is not None and not h.empty:
+            price = h["Close"].iloc[-1]
+            try:
+                info = s.info
+            except Exception:
+                info = {}
+            cache[ticker] = (price, now, info)
+            return price, info, False
+    except Exception:
+        pass
+    return None, {}, False
+
+# ── SEC EDGAR CIK 조회 ────────────────────────────────────────────────────────
 @st.cache_data(ttl=86400)
 def get_cik(ticker: str):
-    """ticker → CIK 번호 반환 (sec.gov 공개 JSON 사용)"""
     try:
         headers = {"User-Agent": "SwingScanner/1.0 contact@example.com"}
         res = requests.get(
             "https://www.sec.gov/files/company_tickers.json",
             headers=headers, timeout=10
         )
-        data = res.json()
-        for entry in data.values():
+        for entry in res.json().values():
             if entry["ticker"].upper() == ticker.upper():
                 return str(entry["cik_str"])
     except Exception:
         pass
     return None
 
-# ── SEC EDGAR: 최신 공시 목록 조회 ────────────────────────────────────────────
+# ── SEC EDGAR 실시간 공시 목록 ────────────────────────────────────────────────
 def get_sec_filings(ticker: str, limit: int = 12):
-    """SEC EDGAR data.sec.gov REST API로 실시간 공시 목록 반환"""
     cik = get_cik(ticker)
     if not cik:
         return None, "CIK를 찾을 수 없습니다."
@@ -76,18 +124,11 @@ def get_sec_filings(ticker: str, limit: int = 12):
         if not recent:
             return None, "공시 데이터가 없습니다."
 
-        forms   = recent.get("form", [])
-        dates   = recent.get("filingDate", [])
-        acc_nos = recent.get("accessionNumber", [])
-        descs   = recent.get("primaryDocument", [])
+        forms = recent.get("form", [])
+        dates = recent.get("filingDate", [])
 
         filings = []
         for i in range(min(len(forms), limit)):
-            acc_clean = acc_nos[i].replace("-", "")
-            edgar_url = (
-                f"https://www.sec.gov/Archives/edgar/full-index/"
-                f"{dates[i][:4]}/QTR{((int(dates[i][5:7])-1)//3)+1}/"
-            )
             filing_url = (
                 f"https://www.sec.gov/cgi-bin/browse-edgar"
                 f"?action=getcompany&CIK={cik}"
@@ -169,19 +210,21 @@ with tab1:
     )
 
     if st.button("🚀 미국 종목 스캔 시작", key="start_us", use_container_width=True):
-        for t in sel_us:
-            s = yf.Ticker(t)
-            h = s.history(period="5d")
-            if not h.empty:
-                info = s.info
-                current_price = h["Close"].iloc[-1]
-                st.info(f"**[{t}]** 현재가: ${current_price:.2f}")
+        for idx, t in enumerate(sel_us):
+            # 종목 간 1.5초 간격으로 Rate Limit 방지
+            if idx > 0:
+                time.sleep(1.5)
 
-                # ── 실시간 SEC 공시 ──────────────────────────────────────────
+            with st.spinner(f"[{t}] 데이터 조회 중..."):
+                price, info, from_cache = fetch_ticker_cached(t)
+
+            if price is not None:
+                cache_note = "  `캐시`" if from_cache else ""
+                st.info(f"**[{t}]** 현재가: ${price:.2f}{cache_note}")
+
                 with st.expander(f"📋 {t} SEC 실시간 공시", expanded=True):
-                    with st.spinner("SEC EDGAR에서 공시를 불러오는 중..."):
+                    with st.spinner("SEC EDGAR 공시 불러오는 중..."):
                         filings, err = get_sec_filings(t)
-
                     if err:
                         st.warning(err)
                         st.markdown(
@@ -190,34 +233,20 @@ with tab1:
                             f"?CIK={t}&action=getcompany)"
                         )
                     else:
-                        # 공시 종류별 색상 구분 표
-                        rows = []
                         for f in filings:
-                            rows.append({
-                                "종류": f["label"],
-                                "Form": f["form"],
-                                "날짜": f["date"],
-                                "링크": f["url"],
-                            })
-                        df_filings = pd.DataFrame(rows)
-
-                        # 테이블 + 클릭 링크로 표시
-                        for _, row in df_filings.iterrows():
                             col_a, col_b, col_c = st.columns([3, 2, 2])
-                            col_a.markdown(f"**{row['종류']}**")
-                            col_b.caption(row["날짜"])
-                            col_c.markdown(f"[원문 보기 ↗]({row['링크']})")
-
+                            col_a.markdown(f"**{f['label']}**")
+                            col_b.caption(f["date"])
+                            col_c.markdown(f"[원문 보기 ↗]({f['url']})")
                         st.markdown("---")
                         cik = get_cik(t)
                         st.markdown(
                             f"🏛️ [SEC EDGAR 전체 공시 보기]"
                             f"(https://www.sec.gov/cgi-bin/browse-edgar"
-                            f"?action=getcompany&CIK={cik}&type=&dateb="
-                            f"&owner=include&count=40)"
+                            f"?action=getcompany&CIK={cik}"
+                            f"&type=&dateb=&owner=include&count=40)"
                         )
 
-                # ── 뉴스 & 홈페이지 ──────────────────────────────────────────
                 with st.expander(f"📰 {t} 뉴스 & 홈페이지"):
                     for n in get_stock_news(t, "US"):
                         st.markdown(
@@ -230,7 +259,10 @@ with tab1:
                     else:
                         st.caption("공식 홈페이지 정보를 찾을 수 없습니다.")
             else:
-                st.error(f"[{t}] 데이터를 찾을 수 없습니다.")
+                st.error(
+                    f"**[{t}]** 데이터를 불러오지 못했습니다. "
+                    "잠시 후 다시 시도해 주세요. (Rate Limit)"
+                )
             st.write("---")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -256,61 +288,50 @@ with tab2:
     )
 
     if st.button("🚀 한국 종목 스캔 시작", key="start_kr", use_container_width=True):
-        for t in sel_kr:
+        for idx, t in enumerate(sel_kr):
+            if idx > 0:
+                time.sleep(1.5)
+
             found = False
             for suffix in [".KS", ".KQ"]:
                 full_ticker = t + suffix
-                s = yf.Ticker(full_ticker)
-                h = s.history(period="5d")
-                if not h.empty:
-                    try:
-                        info = s.info
-                        stock_name = (
-                            info.get("shortName")
-                            or info.get("longName")
-                            or info.get("symbol")
-                            or t
-                        )
-                    except Exception:
-                        stock_name = t
+                with st.spinner(f"[{full_ticker}] 데이터 조회 중..."):
+                    price, info, from_cache = fetch_ticker_cached(full_ticker)
 
+                if price is not None:
+                    stock_name = (
+                        info.get("shortName")
+                        or info.get("longName")
+                        or info.get("symbol")
+                        or t
+                    )
+                    cache_note = "  `캐시`" if from_cache else ""
                     st.success(
                         f"**[{stock_name} ({full_ticker})]** "
-                        f"현재가: {int(h['Close'].iloc[-1]):,} 원"
+                        f"현재가: {int(price):,} 원{cache_note}"
                     )
 
-                    # ── DART 공시 ────────────────────────────────────────────
                     with st.expander("📋 DART 공시", expanded=True):
-                        dart_search = (
-                            f"https://dart.fss.or.kr/dsab001/search.ax"
-                            f"?textCrpNm={stock_name.split(' ')[0]}"
-                        )
-                        dart_news = (
-                            f"https://finance.naver.com/item/news.naver?code={t}"
-                        )
-
-                        # DART 주요 공시 유형 바로가기
+                        name_query = stock_name.split(" ")[0] if stock_name else t
                         col1, col2, col3 = st.columns(3)
                         col1.markdown(
-                            f"[🏛️ DART 공시 검색]({dart_search})"
+                            f"[🏛️ DART 공시 검색]"
+                            f"(https://dart.fss.or.kr/dsab001/search.ax"
+                            f"?textCrpNm={name_query})"
                         )
                         col2.markdown(
-                            f"[📊 네이버 공시]({dart_news})"
+                            f"[📊 네이버 공시]"
+                            f"(https://finance.naver.com/item/news.naver?code={t})"
                         )
                         col3.markdown(
                             f"[📑 KIND 공시]"
                             f"(https://kind.krx.co.kr/disclosure/searchtotalinfo.do"
-                            f"?method=searchTotalInfoMain&searchCodeType=&"
-                            f"marketType=&repIsuSrtCd={t})"
+                            f"?method=searchTotalInfoMain&repIsuSrtCd={t})"
                         )
-
-                        st.markdown("---")
                         st.caption(
-                            "💡 DART API는 브라우저에서 직접 호출이 제한됩니다. "
-                            "위 링크에서 최신 공시를 확인하세요."
+                            "💡 DART Open API 키를 발급받으면 실시간 공시 목록 연동이 가능합니다."
                         )
 
-                    # ── 뉴스 ────────────────────────────────────────────────
                     with st.expander("📰 뉴스 확인"):
                         for n in get_stock_news(full_ticker, "KR"):
                             st.markdown(
@@ -321,7 +342,10 @@ with tab2:
                     break
 
             if not found:
-                st.error(f"[{t}] 데이터를 찾을 수 없습니다.")
+                st.error(
+                    f"**[{t}]** 데이터를 불러오지 못했습니다. "
+                    "잠시 후 다시 시도해 주세요. (Rate Limit)"
+                )
             st.write("---")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -397,4 +421,3 @@ with tab4:
             f"📍 [{entry.title}]({entry.link})  `[{pub_date}]`"
         )
         st.write("")
-
