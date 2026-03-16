@@ -442,16 +442,24 @@ with tab3:
         data = []
         cum_amount = 0.0   # 누적 투입 금액
         cum_shares = 0.0   # 누적 매수 수량
+        prev_avg = start_price  # 직전 누적 평균단가 (1차 기준은 현재가)
 
         for i in range(num_rounds):
             weight = 2 ** i
-            target_p = start_price * (1 - rates[i] / 100)
             amount = base_unit * weight
 
-            # 누적 평균 단가 계산
+            if i == 0:
+                # 1차: 현재가 그대로 진입
+                target_p = start_price
+            else:
+                # 2차~: 직전 누적 평균단가에 하락률 적용
+                target_p = prev_avg * (1 - rates[i] / 100)
+
+            # 누적 평균단가 갱신
             cum_amount += amount
             cum_shares += amount / target_p
             avg_price = cum_amount / cum_shares
+            prev_avg = avg_price  # 다음 회차 기준값으로 전달
 
             data.append({
                 "회차": f"{i + 1}차",
@@ -468,7 +476,7 @@ with tab3:
                     f"${avg_price:,.2f}" if symbol == "$"
                     else f"{int(avg_price):,}원"
                 ),
-                "현재가 대비": "기준가" if rates[i] == 0 else f"-{rates[i]}%",
+                "평단 대비": "기준가" if i == 0 else f"-{rates[i]}%",
             })
 
         df = pd.DataFrame(data)
