@@ -384,48 +384,104 @@ with tab2:
 # ══════════════════════════════════════════════════════════════════════════════
 with tab3:
     st.subheader("💰 현재가 대비 지점별 정밀 계산기")
-    c1, c2, c3 = st.columns(3)
+
+    # ── 기본 설정 행 ──────────────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns([1.5, 2, 2, 1.5])
     currency = c1.radio("통화", ["USD ($)", "KRW (원)"])
     symbol = "$" if currency == "USD ($)" else "원"
     total_budget = c2.number_input(
         f"총 예산 ({symbol})",
         value=1000.0 if symbol == "$" else 3000000.0,
+        min_value=0.0,
     )
     start_price = c3.number_input(
         f"현재가(1차 진입가) ({symbol})",
         value=10.0 if symbol == "$" else 50000.0,
+        min_value=0.0,
     )
+    num_rounds = c4.number_input(
+        "총 분할 횟수",
+        min_value=1, max_value=10, value=5, step=1,
+    )
+    num_rounds = int(num_rounds)
 
-    st.markdown("#### 📉 각 회차별 하락 목표치 설정 (%)")
-    r_cols = st.columns(4)
-    r2 = r_cols[0].number_input("2차 지점 하락", value=5.0)
-    r3 = r_cols[1].number_input("3차 지점 하락", value=10.0)
-    r4 = r_cols[2].number_input("4차 지점 하락", value=15.0)
-    r5 = r_cols[3].number_input("5차 지점 하락", value=20.0)
+    # ── 회차별 하락률 입력 (2차부터, 한 행에 최대 4개씩) ─────────────────────
+    if num_rounds > 1:
+        st.markdown("#### 📉 각 회차별 하락 목표치 설정 (%)")
+        # 기본 하락률 제안값: 5% 간격
+        default_drops = [round(i * (20 / (num_rounds - 1)), 1) if num_rounds > 1 else 5.0
+                         for i in range(1, num_rounds)]
 
+        drop_rates = []  # 2차 ~ num_rounds차 하락률
+        remaining = num_rounds - 1  # 입력받을 개수
+        idx = 0
+        while idx < remaining:
+            batch = min(4, remaining - idx)  # 한 행에 최대 4개
+            cols = st.columns(batch)
+            for j in range(batch):
+                round_no = idx + j + 2  # 2차, 3차, ...
+                default_val = default_drops[idx + j] if (idx + j) < len(default_drops) else 5.0
+                val = cols[j].number_input(
+                    f"{round_no}차 하락 %",
+                    min_value=0.0, max_value=99.0,
+                    value=float(default_val),
+                    step=0.5,
+                    key=f"drop_{round_no}",
+                )
+                drop_rates.append(val)
+            idx += batch
+    else:
+        drop_rates = []
+
+    # ── 계산 및 테이블 출력 ───────────────────────────────────────────────────
     if total_budget > 0 and start_price > 0:
-        base_unit = total_budget / 31
-        rates = [0, r2, r3, r4, r5]
+        rates = [0.0] + drop_rates          # 1차는 0% (현재가)
+        total_weight = sum(2 ** i for i in range(num_rounds))  # 1+2+4+...
+        base_unit = total_budget / total_weight
+
         data = []
-        for i in range(1, 6):
-            weight = 2 ** (i - 1)
-            target_p = start_price * (1 - (rates[i - 1] / 100))
+        cum_amount = 0.0   # 누적 투입 금액
+        cum_shares = 0.0   # 누적 매수 수량
+
+        for i in range(num_rounds):
+            weight = 2 ** i
+            target_p = start_price * (1 - rates[i] / 100)
+            amount = base_unit * weight
+
+            # 누적 평균 단가 계산
+            cum_amount += amount
+            cum_shares += amount / target_p
+            avg_price = cum_amount / cum_shares
+
             data.append({
-                "회차": f"{i}차",
+                "회차": f"{i + 1}차",
                 "비중": f"{weight}배",
-                "목표가": (
+                "매수가": (
                     f"${target_p:,.2f}" if symbol == "$"
                     else f"{int(target_p):,}원"
                 ),
                 "매수금액": (
-                    f"${base_unit * weight:,.0f}" if symbol == "$"
-                    else f"{int(base_unit * weight):,}원"
+                    f"${amount:,.0f}" if symbol == "$"
+                    else f"{int(amount):,}원"
                 ),
-                "현재가 대비": f"-{rates[i-1]}%",
+                "누적 평균단가": (
+                    f"${avg_price:,.2f}" if symbol == "$"
+                    else f"{int(avg_price):,}원"
+                ),
+                "현재가 대비": "기준가" if rates[i] == 0 else f"-{rates[i]}%",
             })
+
         df = pd.DataFrame(data)
         st.table(df)
-        img_buf = export_as_image(df, "Trading Strategy Plan")
+
+        # 비중 합계 안내
+        st.info(
+            f"총 {num_rounds}회 분할 | 비중 합계: **{total_weight}배** 단위 "
+            f"| 기준 단위: "
+            + (f"**${base_unit:,.2f}**" if symbol == "$" else f"**{int(base_unit):,}원**")
+        )
+
+        img_buf = export_as_image(df, f"분할 매수 전략 ({num_rounds}회)")
         st.download_button(
             "📸 계산 결과 이미지로 저장",
             data=img_buf,
@@ -452,3 +508,4 @@ with tab4:
             f"📍 [{entry.title}]({entry.link})  `[{pub_date}]`"
         )
         st.write("")
+
